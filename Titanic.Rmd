@@ -1,0 +1,91 @@
+Titanic analysis
+========================================================
+
+First, create some helper functions
+
+```{r}
+readData <- function(path.name, file.name, column.types, missing.types) {
+  read.csv( paste(path.name, file.name, sep=""), 
+            colClasses=column.types,
+            na.strings=missing.types )
+}
+
+getTitle <- function(data) {
+  title.dot.start <- regexpr("\\,[A-Z ]{1,20}\\.", data$name, TRUE)
+  title.comma.end <- title.dot.start + attr(title.dot.start, "match.length")-1
+  data$title <- substr(data$name, title.dot.start+2, title.comma.end-1)
+  return (data$title)
+}
+
+Titanic.path <- "~/Developer/Kaggle/Titanic/"
+train.data.file <- "train.csv"
+test.data.file <- "test.csv"
+missing.types <- c("NA", "")
+train.column.types <- c('factor',    # Survived
+                        'factor',    # Pclass
+                        'character', # Name
+                        'factor',    # Sex
+                        'numeric',   # Age
+                        'integer',   # SibSp
+                        'integer',   # Parch
+                        'character', # Ticket
+                        'numeric',   # Fare
+                        'character', # Cabin
+                        'factor'     # Embarked
+)
+test.column.types <- train.column.types[-1]
+train.raw <- readData(Titanic.path, train.data.file,
+                      train.column.types, missing.types)
+df.train <- train.raw
+test.raw <- readData(Titanic.path, test.data.file,
+                     test.column.types, missing.types)
+df.infer <- test.raw
+
+require(Amelia)
+missmap(df.train, main="Titanic Training Data - Missings Map",
+        col = c("yellow", "black"), legend = FALSE)
+
+df.train$title <- getTitle(df.train)
+```
+
+I'm going to try to get average age based on title and class
+
+```{r}
+df.train$titleclass <- paste0(df.train$title, df.train$pclass)
+avg.age.by.titleclass <- tapply(df.train$age, df.train$titleclass, FUN=mean, na.rm=TRUE)
+df.train$impute.age <- avg.age.by.titleclass[df.train$titleclass]
+df.train$new.age <- df.train$age
+df.train$new.age[which(is.na(df.train$age))] <-
+  df.train$impute.age[which(is.na(df.train$age))]
+
+df.train$fare.temp <- df.train$fare
+df.train$fare.temp[which(df.train$fare == 0)] <- NA
+avg.fare.by.titleclass <- tapply(df.train$fare.temp, df.train$titleclass, FUN=mean, na.rm=TRUE)
+df.train$impute.fare <- avg.fare.by.titleclass[df.train$titleclass]
+df.train$new.fare <- df.train$fare
+df.train$new.fare[which(df.train$fare == 0)] <-
+  df.train$impute.fare[which(df.train$fare == 0)]
+```
+
+Consolidating the various titles
+
+```{r}
+changeTitles <- function(data, old.titles, new.title) {
+  for (honorific in old.titles) {
+    data$new.title[ which( data$title == honorific)] <- new.title
+  }
+  return (data$new.title)
+}
+df.train$new.title <- df.train$title
+df.train$new.title <- changeTitles(df.train, 
+                               c("Capt", "Col", "Don", "Dr", 
+                               "Jonkheer", "Lady", "Major", 
+                               "Rev", "Sir"),
+                               "Noble")
+df.train$new.title <- changeTitles(df.train, c("the Countess", "Ms"), 
+                               "Mrs")
+df.train$new.title <- changeTitles(df.train, c("Mlle", "Mme"), "Miss")
+df.train$new.title <- as.factor(df.train$new.title)
+
+
+```
