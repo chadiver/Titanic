@@ -86,6 +86,55 @@ df.train$new.title <- changeTitles(df.train, c("the Countess", "Ms"),
                                "Mrs")
 df.train$new.title <- changeTitles(df.train, c("Mlle", "Mme"), "Miss")
 df.train$new.title <- as.factor(df.train$new.title)
+```
 
+Then a whole bunch more feature re-engineering (not all of which I necessarily agree with at this point...)
 
+```{r}
+require(plyr)     # for the revalue function 
+require(stringr)  # for the str_sub function
+
+## test a character as an EVEN single digit
+isEven <- function(x) x %in% c("0","2","4","6","8") 
+## test a character as an ODD single digit
+isOdd <- function(x) x %in% c("1","3","5","7","9") 
+
+## function to add features to training or test data frames
+featureEngrg <- function(data) {
+  ## Using Fate ILO Survived because term is shorter and just sounds good
+  data$fate <- data$survived
+  ## Revaluing Fate factor to ease assessment of confusion matrices later
+  data$fate <- revalue(data$fate, c("1" = "Survived", "0" = "Perished"))
+  ## Boat.dibs attempts to capture the "women and children first"
+  ## policy in one feature.  Assuming all females plus males under 15
+  ## got "dibs' on access to a lifeboat
+  data$boat.dibs <- "No"
+  data$boat.dibs[which(data$Sex == "female" | data$Age < 15)] <- "Yes"
+  data$boat.dibs <- as.factor(data$boat.dibs)
+  ## Family consolidates siblings and spouses (SibSp) plus
+  ## parents and children (Parch) into one feature
+  data$family <- data$sibsp + data$parch
+  ## Fare.pp attempts to adjust group purchases by size of family
+  data$fare.pp <- data$new.fare/(data$family + 1)
+  ## Giving the traveling class feature a new look
+  data$class <- data$pclass
+  data$class <- revalue(data$class, 
+                        c("1"="First", "2"="Second", "3"="Third"))
+  ## First character in Cabin number represents the Deck 
+  data$deck <- substring(data$cabin, 1, 1)
+  data$deck[ which( is.na(data$deck ))] <- "UNK"
+  data$deck <- as.factor(data$deck)
+  ## Odd-numbered cabins were reportedly on the port side of the ship
+  ## Even-numbered cabins assigned Side="starboard"
+  data$cabin.last.digit <- str_sub(data$cabin, -1)
+  data$side <- "UNK"
+  data$side[which(isEven(data$cabin.last.digit))] <- "port"
+  data$side[which(isOdd(data$cabin.last.digit))] <- "starboard"
+  data$side <- as.factor(data$side)
+  data$cabin.last.digit <- NULL
+  return (data)
+}
+
+## add remaining features to training data frame
+df.train <- featureEngrg(df.train)
 ```
