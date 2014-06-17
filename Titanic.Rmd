@@ -160,3 +160,23 @@ test.batch <- df.train.munged[-training.rows, ]
 titanic.logit.1 <- glm(Fate ~ Sex + Class + New.Age + Family + Embarked + New.Fare, data = train.batch, family = binomial("logit"))
 anova(titanic.logit.1, test="Chisq")
 ```
+
+```{r}
+titanic.logit.2 <- glm(Fate ~ Sex + Class + New.Title + Family  + New.Age+ Embarked, data = train.batch, family = binomial("logit"))
+anova(titanic.logit.2, test="Chisq")
+```
+
+Apparently the following allows you to get a sensitivity curve for various threshhold values
+
+```{r}
+require(pROC)
+cv.ctrl <- trainControl(method = "repeatedcv", repeats = 3,
+                        summaryFunction = twoClassSummary,
+                        classProbs = TRUE)
+set.seed(35)
+glm.tune.1 <- train(Fate ~ Sex + Class + New.Age + Family + Embarked,
+                    data = train.batch,
+                    method = "glm",
+                    metric = "ROC",
+                    trControl = cv.ctrl)
+```
