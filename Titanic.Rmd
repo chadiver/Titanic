@@ -136,6 +136,38 @@ featureEngrg <- function(data) {
   return (data)
 }
 
+## function to add features to training or test data frames
+featureEngrg2 <- function(data) {
+  ## Boat.dibs attempts to capture the "women and children first"
+  ## policy in one feature.  Assuming all females plus males under 15
+  ## got "dibs' on access to a lifeboat
+  data$Boat.Dibs <- "No"
+  data$Boat.Dibs[which(data$Sex == "female" | data$Age < 15)] <- "Yes"
+  data$Boat.Dibs <- as.factor(data$Boat.Dibs)
+  ## Family consolidates siblings and spouses (SibSp) plus
+  ## parents and children (Parch) into one feature
+  data$Family <- data$SibSp + data$Parch
+  ## Fare.pp attempts to adjust group purchases by size of family
+  data$Fare.pp <- data$New.Fare/(data$Family + 1)
+  ## Giving the traveling class feature a new look
+  data$Class <- data$Pclass
+  data$Class <- revalue(data$Class, 
+                        c("1"="First", "2"="Second", "3"="Third"))
+  ## First character in Cabin number represents the Deck 
+  data$Deck <- substring(data$Cabin, 1, 1)
+  data$Deck[ which( is.na(data$Deck ))] <- "UNK"
+  data$Deck <- as.factor(data$Deck)
+  ## Odd-numbered cabins were reportedly on the port side of the ship
+  ## Even-numbered cabins assigned Side="starboard"
+  data$Cabin.Last.Digit <- str_sub(data$Cabin, -1)
+  data$Side <- "UNK"
+  data$Side[which(isEven(data$Cabin.Last.Digit))] <- "port"
+  data$Side[which(isOdd(data$Cabin.Last.Digit))] <- "starboard"
+  data$Side <- as.factor(data$Side)
+  data$Cabin.Last.Digit <- NULL
+  return (data)
+}
+
 ## not sure I love this, but OK
 df.train$Embarked[which(is.na(df.train$Embarked))] <- 'S'
 
@@ -179,4 +211,100 @@ glm.tune.1 <- train(Fate ~ Sex + Class + New.Age + Family + Embarked,
                     method = "glm",
                     metric = "ROC",
                     trControl = cv.ctrl)
+glm.tune.2 <- train(Fate ~ Sex + Class + Sex * Class + New.Age + Family + Embarked,
+                    data = train.batch,
+                    method = "glm",
+                    metric = "ROC",
+                    trControl = cv.ctrl)
+glm.tune.3 <- train(Fate ~ Sex + Class + Sex * Class + New.Title + New.Age + Family + Embarked,
+                    data = train.batch,
+                    method = "glm",
+                    metric = "ROC",
+                    trControl = cv.ctrl)
+glm.tune.4 <- train(Fate ~ Sex + Class + Sex * Class + New.Title + New.Age + Family,
+                    data = train.batch,
+                    method = "glm",
+                    metric = "ROC",
+                    trControl = cv.ctrl)
+glm.tune.5 <- train(Fate ~ Class + I(New.Title=="Mr") + I(New.Title=="Noble") + New.Age + Family + I(Embarked=="S") + I(New.Title=="Mr"&Class=="Third"),
+                    data = train.batch,
+                    method = "glm",
+                    metric = "ROC",
+                    trControl = cv.ctrl)
+rf.grid <- data.frame(.mtry = c(2, 3))
+set.seed(35)
+rf.tune <- train(Fate ~ Sex + Class + New.Title + New.Age + Family + Embarked, 
+                 data = train.batch,
+                 method = "rf",
+                 metric = "ROC",
+                 tuneGrid = rf.grid,
+                 trControl = cv.ctrl)
+```
+
+OK, let's try to munge the test file
+
+```{r}
+# get titles
+df.infer$Title <- getTitle(df.infer)
+
+# I'll consolidate the titles before getting using them to get age
+df.infer$New.Title <- df.infer$Title
+df.infer$New.Title <- changeTitles(df.infer, c("Dona", "Ms"), "Mrs")
+df.infer$New.Title <- changeTitles(df.infer, c("Col", "Dr", "Rev"), "Noble")
+df.infer$New.Title <- changeTitles(df.infer, c("Mlle", "Mme"), "Miss")
+df.infer$New.Title <- as.factor(df.infer$New.Title)
+
+# Create the title-class variable and use to impute fare and age
+df.infer$TitleClass <- paste0(df.infer$New.Title, df.infer$Pclass)
+
+mean.age.by.titleclass <- tapply(df.infer$Age, df.infer$TitleClass, mean, na.rm=TRUE)
+df.infer$Impute.Age <- mean.age.by.titleclass[df.infer$TitleClass]
+df.infer$New.Age <- df.infer$Age
+df.infer$New.Age[which(is.na(df.infer$Age))] <-
+  df.infer$Impute.Age[which(is.na(df.infer$Age))]
+
+# Now impute fare
+df.infer$Fare.Temp <- df.infer$Fare
+df.infer$Fare.Temp[which(df.infer$Fare == 0)] <- NA
+avg.fare.by.titleclass <- tapply(df.infer$Fare.Temp, df.infer$TitleClass, FUN=mean, na.rm=TRUE)
+df.infer$Impute.Fare <- avg.fare.by.titleclass[df.infer$TitleClass]
+df.infer$New.Fare <- df.infer$Fare
+df.infer$New.Fare[which(df.infer$Fare == 0)] <-
+  df.infer$Impute.Fare[which(df.infer$Fare == 0)]
+
+df.infer <- featureEngrg2(df.infer)
+
+test.keeps <- train.keeps[-1]
+pred.these <- df.infer[test.keeps]
+
+g
+
+Survived <- predict(glm.tune.5, newdata = pred.these)
+SurvivedRF <- predict(rf.tune, newdata = pred.these)
+
+Survived <- revalue(Survived, c("Survived" = 1, "Perished" = 0))
+SurvivedRF <- revalue(SurvivedRF, c("Survived" = 1, "Perished" = 0))
+
+predictions <- as.data.frame(Survived)
+predictionsRF <- as.data.frame(SurvivedRF)
+
+predictions$PassengerId <- df.infer$PassengerId
+predictionsRF$PassengerId <- df.infer$PassengerId
+
+write.csv(predictions[,c("PassengerId", "Survived")],
+          file="Titanic_predictions.csv", row.names=FALSE, quote=FALSE)
+write.csv(predictionsRF[,c("PassengerId", "SurvivedRF")],
+          file="Titanic_predictionsRF.csv", row.names=FALSE, quote=FALSE)
+
+createCSV <- function(tuning, data, fileName) {
+  Survived <- predict(tuning, newdata = data)
+  Survived <- revalue(Survived, c("Survived" = 1, "Perished" = 0))
+  predictions <- as.data.frame(Survived)
+  predictions$PassengerId <- df.infer$PassengerId
+  write.csv(predictions[,c("PassengerId", "Survived")],
+          file=fileName, row.names=FALSE, quote=FALSE)
+}
+
+createCSV(glm.tune.5, pred.these, "Titanic_predictions.csv")
+createCSV(rf.tune, pred.these, "Titanic_predictionsRF.csv")
 ```
